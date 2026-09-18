@@ -1,0 +1,63 @@
+name: 🔥 Hefaetus Autonomous Remediation (Reusable Workflow)
+
+on:
+  workflow_call:
+    inputs:
+      packages:
+        description: 'Comma-separated target dependencies to remediate (e.g. "uuid@^9.0.0,glob@^10.3.10")'
+        type: string
+        required: false
+      target_dir:
+        description: 'Directory of target package.json relative to repository root'
+        type: string
+        required: false
+        default: '.'
+      max_loops:
+        description: 'Maximum self-healing attempts'
+        type: number
+        required: false
+        default: 6
+      test_command:
+        description: 'Command to run test suite (defaults to npm test)'
+        type: string
+        required: false
+        default: 'npm test'
+    secrets:
+      GEMINI_API_KEY:
+        description: 'Google Gemini API Key'
+        required: false
+      OPENAI_API_KEY:
+        description: 'OpenAI API Key'
+        required: false
+      ANTHROPIC_API_KEY:
+        description: 'Anthropic API Key'
+        required: false
+      GH_PAT:
+        description: 'Personal Access Token for PR creation (bypasses default GITHUB_TOKEN restrictions)'
+        required: false
+
+jobs:
+  remediate:
+    name: 🤖 Autonomous Remediation Loop
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: 📥 Checkout Target Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🛡️ Run Hefaetus Action
+        uses: hefaetus/hefaetus-remediator@main
+        with:
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+          packages: ${{ inputs.packages }}
+          target_dir: ${{ inputs.target_dir }}
+          max_loops: ${{ inputs.max_loops }}
+          test_command: ${{ inputs.test_command }}

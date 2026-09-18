@@ -1,0 +1,47 @@
+{
+  "name": "hefaetus-remediator",
+  "version": "1.0.0",
+  "description": "Autonomous Self-Healing DevSecOps Agent for Breaking Dependency Upgrades",
+  "main": "dist/engine.js",
+  "types": "dist/engine.d.ts",
+  "bin": {
+    "hefaetus": "./bin/hefaetus.js",
+    "hefaetus-remediator": "./bin/hefaetus.js"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "action.yml",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "start": "tsx src/cli.ts",
+    "dev": "tsx watch src/cli.ts"
+  },
+  "keywords": [
+    "devsecops",
+    "remediation",
+    "self-healing",
+    "dependencies",
+    "llm",
+    "github-action",
+    "security"
+  ],
+  "author": "Hefaetus Agent",
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@google/genai": "^2.23.0",
+    "@octokit/rest": "^21.1.1",
+    "chalk": "^4.1.2",
+    "dotenv": "^16.4.7",
+    "openai": "^4.86.0",
+    "simple-git": "^3.27.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.19",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3"
+  }
+}

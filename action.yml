@@ -1,0 +1,68 @@
+name: '🔥 Hefaetus Autonomous Remediation'
+description: 'Autonomous self-healing DevSecOps agent that upgrades deprecated/vulnerable dependencies, runs tests, refactors breaking code via LLM, and opens verified Pull Requests.'
+author: 'Hefaetus Agent'
+
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  gemini_api_key:
+    description: 'Google Gemini API Key (Supports Free Tier with Google AI Studio)'
+    required: false
+  openai_api_key:
+    description: 'OpenAI API Key (optional)'
+    required: false
+  anthropic_api_key:
+    description: 'Anthropic Claude API Key (optional)'
+    required: false
+  github_token:
+    description: 'GitHub token for pushing branch and opening Pull Request'
+    required: false
+    default: ${{ github.token }}
+  packages:
+    description: 'Comma-separated target dependencies to bump (e.g. "uuid@^9.0.0,glob@^10.3.10"). Auto-detects if omitted.'
+    required: false
+  target_dir:
+    description: 'Target repository directory relative to workspace'
+    required: false
+    default: '.'
+  max_loops:
+    description: 'Maximum autonomous self-healing test loops'
+    required: false
+    default: '6'
+  test_command:
+    description: 'Custom test command to execute'
+    required: false
+    default: 'npm test'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: ⚙️ Setup Node.js 20
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20
+
+    - name: 📦 Build Hefaetus Engine
+      shell: bash
+      run: |
+        cd "${{ github.action_path }}"
+        npm ci --prefer-offline || npm install
+        npm run build
+
+    - name: 🚀 Execute Autonomous Remediation
+      shell: bash
+      env:
+        GEMINI_API_KEY: ${{ inputs.gemini_api_key }}
+        OPENAI_API_KEY: ${{ inputs.openai_api_key }}
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic_api_key }}
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+        REPO_OWNER: ${{ github.repository_owner }}
+        REPO_NAME: ${{ github.event.repository.name }}
+      run: |
+        node "${{ github.action_path }}/dist/cli.js" \
+          --target-dir "${{ github.workspace }}/${{ inputs.target_dir }}" \
+          ${{ inputs.packages && format('--packages "{0}"', inputs.packages) || '' }} \
+          --max-loops "${{ inputs.max_loops }}" \
+          --test-command "${{ inputs.test_command }}"
