@@ -234,9 +234,9 @@ Please analyze the failure and generate the patched file content.`;
       const candidateModels = [
         this.model,
         'gemini-3.6-flash',
-        'gemini-2.5-flash',
         'gemini-2.0-flash',
         'gemini-1.5-flash',
+        'gemini-1.5-pro',
       ].filter((m, idx, arr) => m && arr.indexOf(m) === idx);
 
       const MAX_RETRIES_PER_MODEL = 3;

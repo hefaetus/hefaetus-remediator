@@ -28,6 +28,39 @@ export class DependencyScanner {
   }
 
   /**
+   * Attempts to detect outdated dependencies in the target repo via npm outdated.
+   */
+  public detectOutdatedPackages(): TargetPackageDef[] {
+    try {
+      const { spawnSync } = require('child_process');
+      const execResult = spawnSync('npm', ['outdated', '--json'], {
+        cwd: this.targetDir,
+        encoding: 'utf8',
+        shell: process.platform === 'win32',
+      });
+
+      const stdout = (execResult.stdout || '').trim();
+      if (!stdout) return [];
+
+      const data = JSON.parse(stdout);
+      const outdated: TargetPackageDef[] = [];
+
+      for (const [pkgName, info] of Object.entries<any>(data)) {
+        if (info && info.latest) {
+          outdated.push({
+            name: pkgName,
+            targetVersion: `^${info.latest}`,
+          });
+        }
+      }
+
+      return outdated;
+    } catch {
+      return [];
+    }
+  }
+
+  /**
    * Resolves which packages need to be upgraded and remediated.
    */
   public resolveTargetPackages(explicitPackages?: string): TargetPackageDef[] {
@@ -57,7 +90,7 @@ export class DependencyScanner {
       if (fs.existsSync(cfgFile)) {
         try {
           const config = JSON.parse(fs.readFileSync(cfgFile, 'utf8'));
-          if (Array.isArray(config.packages)) {
+          if (Array.isArray(config.packages) && config.packages.length > 0) {
             return config.packages.map((p: any) => {
               if (typeof p === 'string') {
                 const lastAt = p.lastIndexOf('@');
@@ -89,7 +122,25 @@ export class DependencyScanner {
       }
     }
 
-    return DEFAULT_DEMO_PACKAGES;
+    // 4. Try scanning for outdated packages in the repository
+    const detectedOutdated = this.detectOutdatedPackages();
+    if (detectedOutdated.length > 0) {
+      return detectedOutdated;
+    }
+
+    // 5. If explicit demo fallback is allowed via environment variable
+    if (process.env.ALLOW_DEMO_FALLBACK === 'true') {
+      return DEFAULT_DEMO_PACKAGES;
+    }
+
+    // 6. Otherwise fail fast with clear guidance instead of polluting the repository
+    throw new Error(
+      `[Hefaetus Configuration Error]: No packages specified to remediate, and no outdated dependencies were detected.\n` +
+      `Please specify which dependencies to upgrade:\n` +
+      `  • In GitHub Action:    with: packages: "package-name@^target-version"\n` +
+      `  • In CLI:              hefaetus --packages "package-name@^target-version"\n` +
+      `  • In config file:      Add "packages": ["package-name@^target-version"] in .hefaetusrc.json`
+    );
   }
 
   /**

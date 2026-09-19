@@ -47,12 +47,57 @@ export class HefaetusEngine {
       chalk.cyan(`
   ╔═══════════════════════════════════════════════════════════════════════╗
   ║                                                                       ║
-  ║      🔥  H E F A E T U S  ::  Autonomous Remediation Agent  🔥       ║
-  ║      Self-Healing DevSecOps Pipeline for Breaking Dependency Bumps   ║
+  ║           H E F A E T U S  ::  Autonomous Remediation Agent           ║
+  ║      Self-Healing DevSecOps Pipeline for Breaking Dependency Bumps    ║
   ║                                                                       ║
   ╚═══════════════════════════════════════════════════════════════════════╝
   `)
     );
+  }
+
+  /**
+   * Pre-flight checks to ensure the target repository has a valid configuration
+   * and functioning test suite.
+   */
+  private validatePreflight(testCommand: string): void {
+    const pkgPath = path.join(this.targetDir, 'package.json');
+    if (!fs.existsSync(pkgPath)) {
+      throw new Error(`Target directory does not contain a package.json: ${pkgPath}`);
+    }
+
+    let pkgJson: any;
+    try {
+      pkgJson = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    } catch (e: any) {
+      throw new Error(`Invalid package.json at ${pkgPath}: ${e.message}`);
+    }
+
+    // Check test script if running default npm test
+    if (testCommand.trim() === 'npm test' || testCommand.trim() === 'npm t') {
+      const testScript = pkgJson.scripts?.test;
+      if (!testScript) {
+        throw new Error(
+          `[Hefaetus Pre-flight Error]: No "test" script found in package.json.\n` +
+          `Hefaetus is an autonomous test-driven self-healing agent that relies on your test suite ` +
+          `(e.g., Jest, Vitest, Mocha, or node --test) to detect breaking changes and verify fixes.\n` +
+          `Please configure a test script in package.json before running Hefaetus.`
+        );
+      }
+
+      if (
+        testScript.includes('no test specified') ||
+        testScript.includes('echo "Error: no test specified"') ||
+        testScript.trim() === 'exit 1'
+      ) {
+        throw new Error(
+          `[Hefaetus Pre-flight Error]: Detected dummy placeholder test script in package.json:\n` +
+          `  "scripts": { "test": "${testScript}" }\n\n` +
+          `This placeholder script always fails with exit code 1 without running any real tests or producing stack traces.\n` +
+          `Hefaetus requires an automated test suite to detect breaking changes and verify autonomous repairs.\n` +
+          `👉 Please implement your automated test suite or provide a valid test command with --test-command.`
+        );
+      }
+    }
   }
 
   /**
@@ -63,17 +108,22 @@ export class HefaetusEngine {
     const lines = testOutput.split('\n');
 
     for (const line of lines) {
-      // Matches path patterns like /app/src/file.js or src/file.js:12:3
+      // Matches stack trace patterns: "at ... (/path/to/file.js:12:34)" or "at /path/to/file.js:12:34"
       const match = line.match(
-        /(?:[a-zA-Z]:)?[\\/](?:[^:()]+\/)?(src|lib|app)[\\/][^:()]+\.(?:js|ts|jsx|tsx)/i
+        /(?:at\s+(?:.*?\s+\()?(?:file:\/\/)?([a-zA-Z]:?[^():\s]+\.(?:js|ts|jsx|tsx|mjs|cjs)))/i
       );
-      if (match) {
-        const rawPath = match[0];
-        if (!rawPath.includes('node_modules') && !rawPath.includes('internal/')) {
+      if (match && match[1]) {
+        const rawPath = match[1];
+        if (
+          !rawPath.includes('node_modules') &&
+          !rawPath.includes('internal/') &&
+          !rawPath.includes('node:')
+        ) {
           const rel = path.isAbsolute(rawPath)
-            ? path.relative(this.targetDir, rawPath)
-            : rawPath;
-          if (fs.existsSync(path.join(this.targetDir, rel))) {
+            ? path.relative(this.targetDir, rawPath).replace(/\\/g, '/')
+            : rawPath.replace(/\\/g, '/');
+          const fullPath = path.resolve(this.targetDir, rel);
+          if (fs.existsSync(fullPath) && fs.statSync(fullPath).isFile()) {
             found.add(rel);
           }
         }
@@ -83,36 +133,58 @@ export class HefaetusEngine {
   }
 
   /**
-   * Scans project files to find which files import a given package.
+   * Recursively scans project files to find which files import a given package.
    */
   private findFilesImportingPackage(packageName: string): string[] {
     const results: string[] = [];
-    const searchDirs = ['src', 'lib', 'app', '.'];
+    const ignoredDirs = new Set([
+      'node_modules',
+      '.git',
+      'dist',
+      'build',
+      '.next',
+      'coverage',
+      '.cache',
+      '.github',
+    ]);
+    const codeExtensions = new Set(['.js', '.ts', '.jsx', '.tsx', '.mjs', '.cjs']);
 
-    for (const dir of searchDirs) {
-      const fullDir = path.join(this.targetDir, dir);
-      if (fs.existsSync(fullDir)) {
-        try {
-          const entries = fs.readdirSync(fullDir, { withFileTypes: true });
-          for (const entry of entries) {
-            if (entry.isFile() && (entry.name.endsWith('.js') || entry.name.endsWith('.ts'))) {
-              const rel = dir === '.' ? entry.name : path.join(dir, entry.name);
-              const content = fs.readFileSync(path.join(fullDir, entry.name), 'utf8');
-              if (
-                content.includes(`require('${packageName}`) ||
-                content.includes(`require("${packageName}`) ||
-                content.includes(`from '${packageName}`) ||
-                content.includes(`from "${packageName}`)
-              ) {
-                results.push(rel);
+    const scanDir = (dir: string) => {
+      let entries: fs.Dirent[] = [];
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          if (!ignoredDirs.has(entry.name)) {
+            scanDir(path.join(dir, entry.name));
+          }
+        } else if (entry.isFile()) {
+          const ext = path.extname(entry.name);
+          if (codeExtensions.has(ext)) {
+            const fullPath = path.join(dir, entry.name);
+            try {
+              const content = fs.readFileSync(fullPath, 'utf8');
+              const escapedPkg = packageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              const importRegex = new RegExp(
+                `(\\brequire\\s*\\(\\s*['"]${escapedPkg}(?:\\/.*)?['"]\\s*\\)|\\bfrom\\s*['"]${escapedPkg}(?:\\/.*)?['"]|\\bimport\\s*\\(\\s*['"]${escapedPkg}(?:\\/.*)?['"]\\s*\\))`,
+                'i'
+              );
+              if (importRegex.test(content)) {
+                results.push(path.relative(this.targetDir, fullPath).replace(/\\/g, '/'));
               }
+            } catch {
+              // ignore unreadable files
             }
           }
-        } catch {
-          // ignore
         }
       }
-    }
+    };
+
+    scanDir(this.targetDir);
     return results;
   }
 
@@ -128,6 +200,9 @@ export class HefaetusEngine {
       'fix/hefaetus-autonomous-dependency-remediation';
     const maxAttempts = options.maxAttempts || Number(process.env.MAX_HEALING_ATTEMPTS) || 6;
     const testCommand = options.testCommand || process.env.TEST_COMMAND || 'npm test';
+
+    // Pre-flight checks (fail fast if test suite is missing or placeholder)
+    this.validatePreflight(testCommand);
 
     const runnerInfo = await this.runner.getActiveModeDescription();
     const llmInfo = this.llm.getProviderInfo();
@@ -266,21 +341,50 @@ export class HefaetusEngine {
         targetFileRel = importing.find((f) => !healedFiles.has(f)) || importing[0];
       }
       if (!targetFileRel) {
-        targetFileRel = 'src/index.js';
+        // Look up package.json main or module
+        const pkgPath = path.join(this.targetDir, 'package.json');
+        if (fs.existsSync(pkgPath)) {
+          try {
+            const pkgJson = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+            const mainCandidate = pkgJson.main || pkgJson.module;
+            if (mainCandidate && fs.existsSync(path.join(this.targetDir, mainCandidate))) {
+              targetFileRel = mainCandidate.replace(/\\/g, '/');
+            }
+          } catch {
+            // ignore
+          }
+        }
+      }
+      if (!targetFileRel) {
+        // Look for common standard entry points that ACTUALLY EXIST on disk
+        const commonEntries = [
+          'index.js',
+          'index.ts',
+          'app.js',
+          'app.ts',
+          'server.js',
+          'server.ts',
+          'src/index.js',
+          'src/index.ts',
+          'src/app.js',
+          'src/app.ts',
+          'src/server.js',
+          'src/server.ts',
+          'src/main.js',
+          'src/main.ts',
+        ];
+        targetFileRel = commonEntries.find((f) => fs.existsSync(path.join(this.targetDir, f)));
       }
 
-      const targetFilePath = path.join(this.targetDir, targetFileRel);
-      if (!fs.existsSync(targetFilePath)) {
-        console.warn(
-          chalk.yellow(
-            `⚠️ Could not locate source file at ${targetFilePath}. Attempting to locate root entry point.`
-          )
+      if (!targetFileRel) {
+        throw new Error(
+          `[Hefaetus Error]: Could not locate any source file importing "${failingTarget.name}" or referenced in the test failure stack trace.\n` +
+          `Please check that "${failingTarget.name}" is used in your project or that tests output a file stack trace.`
         );
       }
 
-      const currentFileContent = fs.existsSync(targetFilePath)
-        ? fs.readFileSync(targetFilePath, 'utf8')
-        : '';
+      const targetFilePath = path.join(this.targetDir, targetFileRel);
+      const currentFileContent = fs.readFileSync(targetFilePath, 'utf8');
       const currentBump = packageBumps.find((p) => p.name === failingTarget!.name);
 
       console.log(
