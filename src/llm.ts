@@ -74,7 +74,7 @@ export class RemediationLLMClient {
     if ((forcedProvider === 'gemini' || forcedProvider === 'google') && hasGemini) {
       this.provider = 'gemini';
       this.geminiClient = new GoogleGenAI({ apiKey: geminiKey });
-      this.model = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+      this.model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
     } else if (forcedProvider === 'openai' && hasOpenAI) {
       this.provider = 'openai';
       this.openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -89,7 +89,7 @@ export class RemediationLLMClient {
       // Free Tier Default if Gemini API key is provided
       this.provider = 'gemini';
       this.geminiClient = new GoogleGenAI({ apiKey: geminiKey });
-      this.model = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+      this.model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
     } else if (hasOpenAI) {
       this.provider = 'openai';
       this.openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -101,9 +101,8 @@ export class RemediationLLMClient {
       });
       this.model = process.env.ANTHROPIC_MODEL || 'claude-3-5-sonnet-20241022';
     } else {
-      // Offline / Demo Fallback Mode
-      this.provider = 'mock';
-      this.model = 'hefaetus-deterministic-engine';
+      this.provider = 'gemini';
+      this.model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
     }
   }
 
@@ -125,67 +124,6 @@ export class RemediationLLMClient {
       return codeBlockMatch[1].trim();
     }
     return rawText.trim();
-  }
-
-  /**
-   * Returns deterministic fallback remediation for offline / demo mode.
-   */
-  private getDeterministicPatch(input: RemediationInput): RemediationOutput {
-    if (input.packageName === 'glob' || input.filePath.includes('fileFinder')) {
-      const globPatched = `const { glob } = require('glob');
-
-async function findFiles(pattern) {
-  return glob(pattern);
-}
-
-module.exports = { findFiles };
-`;
-      return {
-        patchedCode: globPatched,
-        explanation:
-          "Migrated legacy callback-based 'glob(pattern, cb)' to modern Promise-based named export '{ glob }' from 'glob' v10.",
-        breakingChangeAnalysis:
-          "In glob v10+, the default export is no longer a callback function. Calling glob directly throws 'TypeError: glob is not a function'. Modern glob exports an async Promise-based function { glob }.",
-        rawResponse: 'DETERMINISTIC_ENGINE_OUTPUT',
-      };
-    }
-
-    if (input.packageName === 'rimraf' || input.filePath.includes('fileCleaner')) {
-      const rimrafPatched = `const { rimraf } = require('rimraf');
-
-async function deletePath(targetPath) {
-  return rimraf(targetPath);
-}
-
-module.exports = { deletePath };
-`;
-      return {
-        patchedCode: rimrafPatched,
-        explanation:
-          "Migrated legacy callback-based 'rimraf(path, cb)' to modern Promise-based named export '{ rimraf }' from 'rimraf' v5.",
-        breakingChangeAnalysis:
-          "In rimraf v4/v5+, the default function signature was removed in favor of named exports. Calling rimraf directly throws 'TypeError: rimraf is not a function'. The modern API provides { rimraf } returning a native Promise.",
-        rawResponse: 'DETERMINISTIC_ENGINE_OUTPUT',
-      };
-    }
-
-    const mockPatched = `const { v4: uuidv4 } = require('uuid');
-
-function generateId() {
-  return uuidv4();
-}
-
-module.exports = { generateId };
-`;
-
-    return {
-      patchedCode: mockPatched,
-      explanation:
-        "Updated deprecated deep require path 'uuid/v4' to named ES/CJS import '{ v4: uuidv4 }' from root 'uuid' package.",
-      breakingChangeAnalysis:
-        "In uuid v7, v8, and v9, deep require paths such as require('uuid/v4') were permanently removed in compliance with modern package exports encapsulation. The recommended import pattern is const { v4: uuidv4 } = require('uuid').",
-      rawResponse: 'DETERMINISTIC_ENGINE_OUTPUT',
-    };
   }
 
   /**
@@ -232,8 +170,9 @@ Please analyze the failure and generate the patched file content.`;
     // 1. Google Gemini (Supports Free Tier with Google AI Studio)
     if (this.provider === 'gemini' && this.geminiClient) {
       const candidateModels = [
-        this.model,
+        'gemini-2.5-flash',
         'gemini-3.6-flash',
+        this.model,
         'gemini-2.0-flash',
         'gemini-1.5-flash',
         'gemini-1.5-pro',
@@ -326,17 +265,17 @@ Please analyze the failure and generate the patched file content.`;
         }
       }
 
-      console.warn(
-        chalk.yellow(
-          `\n⚠️  [LLM Warning] All Google Gemini candidate models exhausted or temporarily unavailable (${lastGeminiError?.message || 'High Demand'}). Falling back to Hefaetus deterministic engine for live demonstration.`
-        )
+      throw new Error(
+        `[Hefaetus LLM Error]: All Google Gemini candidate models exhausted or temporarily unavailable (${
+          lastGeminiError?.message || JSON.stringify(lastGeminiError) || 'High Demand'
+        }). Halting remediation.`
       );
-      return this.getDeterministicPatch(input);
     }
 
     // 2. OpenAI GPT-4o
     if (this.provider === 'openai' && this.openaiClient) {
       let attempt = 0;
+      let lastOpenAIError: any = null;
       const MAX_RETRIES = 3;
       while (attempt < MAX_RETRIES) {
         attempt++;
@@ -374,6 +313,7 @@ Please analyze the failure and generate the patched file content.`;
             };
           }
         } catch (err: any) {
+          lastOpenAIError = err;
           if (isRetryableError(err) && attempt < MAX_RETRIES) {
             const backoffMs = attempt * 2000;
             console.warn(
@@ -382,19 +322,18 @@ Please analyze the failure and generate the patched file content.`;
             await sleep(backoffMs);
             continue;
           }
-          console.warn(
-            chalk.yellow(
-              `\n⚠️  [LLM Warning] OpenAI API request failed (${err.message}). Falling back to Hefaetus deterministic engine for live demonstration.`
-            )
-          );
-          return this.getDeterministicPatch(input);
+          break;
         }
       }
+      throw new Error(
+        `[Hefaetus LLM Error]: OpenAI API request failed: ${lastOpenAIError?.message || lastOpenAIError}`
+      );
     }
 
     // 3. Anthropic Claude 3.5 Sonnet
     if (this.provider === 'anthropic' && this.anthropicClient) {
       let attempt = 0;
+      let lastAnthropicError: any = null;
       const MAX_RETRIES = 3;
       while (attempt < MAX_RETRIES) {
         attempt++;
@@ -435,6 +374,7 @@ Please analyze the failure and generate the patched file content.`;
             rawResponse: rawContent,
           };
         } catch (err: any) {
+          lastAnthropicError = err;
           if (isRetryableError(err) && attempt < MAX_RETRIES) {
             const backoffMs = attempt * 2000;
             console.warn(
@@ -443,17 +383,17 @@ Please analyze the failure and generate the patched file content.`;
             await sleep(backoffMs);
             continue;
           }
-          console.warn(
-            chalk.yellow(
-              `\n⚠️  [LLM Warning] Anthropic API request failed (${err.message}). Falling back to Hefaetus deterministic engine for live demonstration.`
-            )
-          );
-          return this.getDeterministicPatch(input);
+          break;
         }
       }
+      throw new Error(
+        `[Hefaetus LLM Error]: Anthropic API request failed: ${lastAnthropicError?.message || lastAnthropicError}`
+      );
     }
 
-    // 4. Offline / Deterministic Fallback Mode
-    return this.getDeterministicPatch(input);
+    throw new Error(
+      `[Hefaetus LLM Error]: No valid AI API key detected or provider failed. ` +
+      `Please provide a valid GEMINI_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY.`
+    );
   }
 }
