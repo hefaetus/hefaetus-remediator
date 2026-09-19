@@ -225,6 +225,46 @@ export class HefaetusEngine {
     console.log(`✔ Switched to clean remediation branch: ${chalk.blue(branchName)}\n`);
 
     // -------------------------------------------------------------
+    // STEP 0: Baseline Verification (Ensure test suite passes before upgrade)
+    // -------------------------------------------------------------
+    console.log(
+      chalk.bgYellow.black.bold(
+        ' [STEP 0/5] BASELINE TEST SUITE VERIFICATION '
+      )
+    );
+    console.log(`Verifying baseline '${testCommand}' in isolated environment...`);
+    const baselineResult = await this.runner.runNpmTest(this.targetDir, testCommand);
+    if (!baselineResult.success) {
+      const baselineOutput = `${baselineResult.stderr}\n${baselineResult.stdout}`.trim();
+      const isMissingTests =
+        baselineOutput.includes('Could not find') ||
+        baselineOutput.includes('No test files found') ||
+        baselineOutput.includes('No tests found') ||
+        baselineOutput.includes('matches no files') ||
+        baselineOutput.includes('0 test suites found');
+
+      if (isMissingTests) {
+        throw new Error(
+          `[Hefaetus Test Suite Error]: Test runner cannot find any test files in target repository!\n` +
+          `Test command '${testCommand}' exited with code ${baselineResult.exitCode}:\n` +
+          `-------------------------------------------------------------\n` +
+          `${baselineOutput.slice(0, 1000)}\n` +
+          `-------------------------------------------------------------\n` +
+          `👉 Remediation requires a functioning test suite to verify breaking changes.\n` +
+          `Please create test files in your repository (e.g. matching 'test/**/*.test.js') before running Hefaetus.`
+        );
+      }
+
+      console.warn(
+        chalk.yellow(
+          `⚠️ Baseline tests failed prior to dependency bumps (Exit Code: ${baselineResult.exitCode}). Proceeding with remediation...\n`
+        )
+      );
+    } else {
+      console.log(chalk.green('✔ Baseline test suite passed! Codebase is green prior to upgrades.\n'));
+    }
+
+    // -------------------------------------------------------------
     // STEP 1: Scan & Detect Vulnerable Dependencies
     // -------------------------------------------------------------
     console.log(
@@ -312,6 +352,22 @@ export class HefaetusEngine {
       );
 
       const combinedOutput = `${testResult.stderr}\n${testResult.stdout}`;
+
+      // Check if the test failure is due to missing test files rather than code errors
+      const isMissingTests =
+        combinedOutput.includes('Could not find') ||
+        combinedOutput.includes('No test files found') ||
+        combinedOutput.includes('No tests found') ||
+        combinedOutput.includes('matches no files') ||
+        combinedOutput.includes('0 test suites found');
+
+      if (isMissingTests) {
+        throw new Error(
+          `[Hefaetus Test Suite Error]: Test execution failed because no test files were found!\n` +
+          `Test runner output:\n${combinedOutput.trim().slice(0, 400)}\n\n` +
+          `👉 Self-healing requires test files to execute and verify code fixes. Please create test files (e.g. matching 'test/**/*.test.js') in your repository.`
+        );
+      }
 
       // 1. Identify which package caused the failure
       let failingTarget = targetPackages.find((pkg) => {

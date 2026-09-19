@@ -83,7 +83,7 @@ export class SandboxRunner {
     const hasDocker = await this.checkDocker();
 
     if (hasDocker) {
-      const dockerImage = process.env.SANDBOX_IMAGE || 'node:20-alpine';
+      const dockerImage = process.env.SANDBOX_IMAGE || 'node:22-alpine';
       const absPath = path.resolve(targetDir);
       const dockerCmd = `docker run --rm -v "${absPath}:/app" -w /app "${dockerImage}" ${customCommand}`;
       const result = await this.executeLocalCommand(dockerCmd, targetDir, 60000);
