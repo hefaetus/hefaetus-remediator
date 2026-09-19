@@ -74,7 +74,7 @@ export class RemediationLLMClient {
     if ((forcedProvider === 'gemini' || forcedProvider === 'google') && hasGemini) {
       this.provider = 'gemini';
       this.geminiClient = new GoogleGenAI({ apiKey: geminiKey });
-      this.model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+      this.model = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
     } else if (forcedProvider === 'openai' && hasOpenAI) {
       this.provider = 'openai';
       this.openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -89,7 +89,7 @@ export class RemediationLLMClient {
       // Free Tier Default if Gemini API key is provided
       this.provider = 'gemini';
       this.geminiClient = new GoogleGenAI({ apiKey: geminiKey });
-      this.model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+      this.model = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
     } else if (hasOpenAI) {
       this.provider = 'openai';
       this.openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -102,7 +102,7 @@ export class RemediationLLMClient {
       this.model = process.env.ANTHROPIC_MODEL || 'claude-3-5-sonnet-20241022';
     } else {
       this.provider = 'gemini';
-      this.model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+      this.model = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
     }
   }
 
@@ -170,12 +170,13 @@ Please analyze the failure and generate the patched file content.`;
     // 1. Google Gemini (Supports Free Tier with Google AI Studio)
     if (this.provider === 'gemini' && this.geminiClient) {
       const candidateModels = [
-        'gemini-2.5-flash',
-        'gemini-3.6-flash',
         this.model,
-        'gemini-2.0-flash',
-        'gemini-1.5-flash',
-        'gemini-1.5-pro',
+        'gemini-3.7-flash',
+        'gemini-3.6-flash',
+        'gemini-3.5-flash',
+        'gemini-flash-latest',
+        'gemini-3.8-flash',
+        'gemini-3.5-flash-lite',
       ].filter((m, idx, arr) => m && arr.indexOf(m) === idx);
 
       const MAX_RETRIES_PER_MODEL = 3;
